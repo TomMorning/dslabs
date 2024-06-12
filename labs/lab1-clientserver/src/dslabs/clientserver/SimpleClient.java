@@ -1,12 +1,17 @@
 package dslabs.clientserver;
 
+import dslabs.atmostonce.AMOCommand;
+import dslabs.atmostonce.AMOResult;
 import dslabs.framework.Address;
 import dslabs.framework.Client;
 import dslabs.framework.Command;
 import dslabs.framework.Node;
 import dslabs.framework.Result;
+import com.google.common.base.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
+import org.checkerframework.checker.units.qual.A;
 
 /**
  * Simple client that sends requests to a single server and returns responses.
@@ -18,7 +23,10 @@ import lombok.ToString;
 class SimpleClient extends Node implements Client {
   private final Address serverAddress;
 
-  // Your code here...
+  private Request request;
+  private Reply reply;
+
+  private static final AtomicInteger sequenceNumber = new AtomicInteger(0);
 
   /* -----------------------------------------------------------------------------------------------
    *  Construction and Initialization
@@ -38,32 +46,44 @@ class SimpleClient extends Node implements Client {
    * ---------------------------------------------------------------------------------------------*/
   @Override
   public synchronized void sendCommand(Command command) {
-    // Your code here...
+    AMOCommand amoCommand = new AMOCommand(command, sequenceNumber.addAndGet(1), address().toString());
+    request = new Request(amoCommand);
+    reply = null;
+    send(request, serverAddress);
+    set(new ClientTimer(request), ClientTimer.CLIENT_RETRY_MILLIS);
   }
 
   @Override
   public synchronized boolean hasResult() {
-    // Your code here...
-    return false;
+    return reply != null;
   }
 
   @Override
   public synchronized Result getResult() throws InterruptedException {
-    // Your code here...
-    return null;
+    while (reply == null) {
+      wait();
+    }
+    AMOResult replyResult = reply.result();
+    return replyResult.result();
   }
 
   /* -----------------------------------------------------------------------------------------------
    *  Message Handlers
    * ---------------------------------------------------------------------------------------------*/
   private synchronized void handleReply(Reply m, Address sender) {
-    // Your code here...
+    if (m.result().sequenceNumber() == request.command().sequenceNumber()) {
+      reply = m;
+      notifyAll();
+    }
   }
 
   /* -----------------------------------------------------------------------------------------------
    *  Timer Handlers
    * ---------------------------------------------------------------------------------------------*/
   private synchronized void onClientTimer(ClientTimer t) {
-    // Your code here...
+   if (Objects.equal(t.request(), request) && reply == null) {
+     send(t.request(), serverAddress);
+     set(new ClientTimer(t.request()), ClientTimer.CLIENT_RETRY_MILLIS);
+   }
   }
 }
